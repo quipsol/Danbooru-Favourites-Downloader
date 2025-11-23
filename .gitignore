@@ -1,0 +1,11 @@
+# Ignore subfolders
+.vscode/
+__pycache__/
+Local/
+
+# Ignore specific files
+.env
+test.py
+
+# Ignore Python bytecode files
+*.pyc
