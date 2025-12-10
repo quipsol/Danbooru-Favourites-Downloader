@@ -2,10 +2,13 @@
 .vscode/
 __pycache__/
 Local/
+build/
+dist/
 
 # Ignore specific files
 .env
 test.py
 
-# Ignore Python bytecode files
+# Ignore specific file-types
 *.pyc
+*.spec

@@ -1,5 +1,4 @@
 import sqlite3
-import os
 from dataclasses import dataclass
 
 @dataclass
@@ -15,6 +14,7 @@ class PostMetaData:
     parent_id: int = -1
     has_children: bool = False
     has_active_children: bool = False
+    file_ext: str = ""
 
     def __init__(self, post_id: int):
         self.post_id = post_id
@@ -23,9 +23,9 @@ class Database:
     def __init__(self, path):
         self.con = sqlite3.connect(path)
         self.cur = self.con.cursor()
-        self._create_tables()
+        self.create_tables()
     
-    def _create_tables(self):
+    def create_tables(self):
         sql_create_table_queries = [ 
         """CREATE TABLE IF NOT EXISTS posts (
             post_id INTEGER PRIMARY KEY, 
@@ -35,10 +35,11 @@ class Database:
             tag_string_copyright TEXT,
             tag_string_artist TEXT,
             tag_string_meta TEXT,
-            rating,
+            rating TEXT,
             parent_id INTEGER,
             has_children BOOLEAN NOT NULL,
-            has_active_children BOOLEAN NOT NULL
+            has_active_children BOOLEAN NOT NULL,
+            file_ext TEXT
         );""",
         """CREATE TABLE IF NOT EXISTS error (
             post_id INTEGER PRIMARY KEY
@@ -54,7 +55,6 @@ class Database:
         self.cur.execute(sql_create_table_queries[2])
         self.con.commit()
 
-
     def insert_post_data(self, data:PostMetaData):
         query_data = (data.post_id,
                 data.md5,
@@ -66,7 +66,8 @@ class Database:
                 data.rating,
                 data.parent_id,
                 data.has_children,
-                data.has_active_children)
+                data.has_active_children,
+                data.file_ext)
 
         query = """INSERT INTO posts (
                     post_id,
@@ -79,8 +80,9 @@ class Database:
                     rating,
                     parent_id,
                     has_children,
-                    has_active_children)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?)"""
+                    has_active_children,
+                    file_ext)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?)"""
         self.cur.execute(query, query_data)
 
     def insert_id_to_error(self, id:int):
@@ -106,8 +108,44 @@ class Database:
         else:
             return int(ret_tuple[0])
 
+    def get_error_ids(self) -> list:
+        query_data = ()
+        query = """SELECT post_id FROM error"""
+        ret = self.cur.execute(query, query_data)
+        retVal = ret.fetchall()
+        if len(retVal) == 0: 
+            return []
+        ids = [item[0] for item in retVal]
+        return ids
+
+    def remove_from_error(self, id) -> None:
+        query_data = (id,)
+        print("rtertertertertertet")
+        query = """DELETE FROM error WHERE post_id = ?"""
+        self.cur.execute(query, query_data)
+
+    def delete_tables(self) -> None: 
+        sql_drop_table_queries = [ 
+        """DELETE FROM error;""",
+        """DELETE FROM posts;""",
+        """DELETE FROM key_value_pairs;"""
+        ]
+
+        self.cur.execute(sql_drop_table_queries[0])
+        self.cur.execute(sql_drop_table_queries[1])
+        self.cur.execute(sql_drop_table_queries[2])
+        self.con.commit()
+
+
+
     def commit(self):
         self.con.commit()
 
     def close(self):
         self.con.close()
+    
+    def __enter__(self):
+        return self
+    
+    def __exit__(self, exc_type, exc, tb):
+        self.close()
