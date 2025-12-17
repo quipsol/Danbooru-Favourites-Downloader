@@ -49,4 +49,4 @@ Run any of the relevant python files
 
 ***
 
-Want to keep the tags and search functionality of the danbooru website? Check out [TagStudio](https://docs.tagstud.io/) and this tag import tool [Danbooru-Favourites-Downloader to TagStudio Importer](https://github.com/quipsol/DFD-into-TagStudio-importer)
+Want to keep the tags and search functionality of the danbooru website? Check out [TagStudio](https://docs.tagstud.io/) and this tag import tool [Danbooru-Favourites-Downloader to TagStudio Importer](https://github.com/quipsol/DFD-to-TagStudio-importer)
