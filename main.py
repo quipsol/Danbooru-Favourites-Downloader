@@ -1,9 +1,7 @@
 
 from sys import exit as sys_exit
-from sys import argv
 import os
 from database import Database, PostMetaData
-from pybooru import Danbooru, exceptions as booru_exc
 from dotenv import load_dotenv
 import asyncio
 import aiohttp
@@ -17,41 +15,60 @@ class DownloadMode(Enum):
     FORCE  = auto()
 
 load_dotenv()
-USERNAME = os.getenv('ACCOUNT_NAME')
-API_KEY = os.getenv('API_KEY')
-DB_LOCATION = os.getenv('DB_LOCATION')
-FILE_DIRECTORY = os.getenv('FILE_DIRECTORY')
+USERNAME = os.getenv('ACCOUNT_NAME') or ''
+API_KEY = os.getenv('API_KEY') or ''
+DB_LOCATION = os.getenv('DB_LOCATION') or ''
+FILE_DIRECTORY = os.getenv('FILE_DIRECTORY') or ''
 
-if DB_LOCATION is None or FILE_DIRECTORY is None or USERNAME is None or API_KEY is None:
+if FILE_DIRECTORY is None or USERNAME is None or API_KEY is None:
     print("Please set the following values in your .env file")
     if USERNAME is None: print("ACCOUNT_NAME")
     if API_KEY is None: print("API_KEY")
-    if DB_LOCATION is None: print("DB_LOCATION")
     if FILE_DIRECTORY is None: print("FILE_DIRECTORY")
     sys_exit(0)
 
-client = Danbooru('danbooru', username=USERNAME, api_key=API_KEY)
+
+if DB_LOCATION is None:
+    DB_LOCATION = os.getcwd()
+
+RATE_LIMIT_INTERVAL = 1.0 # only 1 request per second
+semaphore = asyncio.Semaphore(10)
+authenticator = aiohttp.BasicAuth(login=USERNAME, password=API_KEY)
+base_url = 'https://danbooru.donmai.us'
+search_result_endpoint = '/posts.json' # needs post:index key access
+specific_post_endpoint = '/posts/{0}.json' # needs post:show key access
 
 
-
-def get_all_error_posts(database:Database)-> list[dict]:
+async def get_all_error_posts(session:aiohttp.ClientSession, database:Database)-> list[dict]:
     error_ids = database.get_error_ids()
     if len(error_ids) == 0:
         return []
     posts = []
+    end = 0
     for id in error_ids:
         start = time()
-        posts.append(client.post_show(id))
-        sleep(max(0, 0.105-(time() - start))) # rate limit of 10/s
+        async with session.get(base_url + specific_post_endpoint.format(id), auth=authenticator) as resp:
+            resp.raise_for_status()
+            posts.append(await resp.json())
+        if len(posts) > 100: # Make use of burst pool
+            await asyncio.sleep(max(0, RATE_LIMIT_INTERVAL - (time() - start))) # 1 request per second
     return posts
 
-def get_all_new_posts(latest_id: int = 0) -> list[dict]:
+async def get_all_new_posts(session:aiohttp.ClientSession, latest_id: int = 0) -> list[dict]:
     page = 1
     final_result = []
+    end = 0
     while True:
         start = time()
-        result = client.post_list(limit=20, page=page, tags=f"ordfav:{USERNAME}")
-        sleep(max(0, 0.105-(time() - start))) # rate limit of 10/s
+        params = {
+            'tags': f'ordfav:{USERNAME}',
+            'limit': 20,
+            'page': page
+        }
+        async with session.get(base_url + search_result_endpoint, params=params, auth=authenticator) as resp:
+            resp.raise_for_status()
+            result = await resp.json()
+
         if result == []:
             break
         result_ids = [item['id'] for item in result]
@@ -61,16 +78,19 @@ def get_all_new_posts(latest_id: int = 0) -> list[dict]:
             break
         final_result.extend(result)
         page += 1
+        if page > 100: # Make use of burst pool
+            await asyncio.sleep(max(0, RATE_LIMIT_INTERVAL - (time() - start))) # Max 1 request per second
     return final_result
         
-def select_posts(database:Database, mode:DownloadMode)->list[dict]:
+async def select_posts(database:Database, session, mode:DownloadMode)->list[dict]:
     if mode is DownloadMode.NORMAL:
-        return get_all_new_posts(database.get_newest_downlaoded_id())
+        return await get_all_new_posts(session, database.get_newest_downlaoded_id())
     elif mode is DownloadMode.RETRY:
         print("Gathering IDs of posts that failed to download before")
-        return get_all_error_posts(database)
-    else:
-        return get_all_new_posts(database.get_newest_downlaoded_id())
+        return await get_all_error_posts(session, database)
+    else: # DownloadMode.FORCE
+        return await get_all_new_posts(session)
+
 
 
 def build_metadata(post: dict) -> PostMetaData:
@@ -92,20 +112,19 @@ def build_metadata(post: dict) -> PostMetaData:
         pmd.has_active_children = False
     return pmd
 
-semaphore = asyncio.Semaphore(10)
-async def download_limited(post_json: dict, session):
+async def download_limiter(session:aiohttp.ClientSession, post_json: dict):
     async with semaphore:
-        return await download_file(post_json, session)
+        return await download_file(session, post_json)
 
-async def download_file(post_json: dict, session) -> tuple[bool, dict]:
+async def download_file(session:aiohttp.ClientSession, post_json: dict) -> tuple[bool, dict]:
     file_url = post_json.get('file_url')
     if not file_url:
         print(f"No file url found for post id {post_json['id']}")
-        return [False, post_json]
+        return (False, post_json)
     file_ext = post_json.get('file_ext')
     if not file_ext:
         print(f"No original variant found for post id {post_json['id']}")
-        return [False, post_json]
+        return (False, post_json)
     try:
         async with session.get(file_url) as resp:
             resp.raise_for_status()
@@ -117,8 +136,8 @@ async def download_file(post_json: dict, session) -> tuple[bool, dict]:
                     f.write(chunk)
     except Exception as e:
         print(f"[EXCEPTION] Download failed with error: {e}")
-        return [False, post_json]
-    return [True, post_json]
+        return (False, post_json)
+    return (True, post_json)
 
 def handle_result(ret:tuple[bool, dict], database:Database, mode:DownloadMode):
     success, errors = 0, 0
@@ -143,18 +162,19 @@ async def a_main(mode: DownloadMode):
             database.create_tables()
             database.commit()
 
-        posts = select_posts(database, mode)
-        post_ids = [p['id'] for p in posts]
-        if not post_ids:
-            if mode is DownloadMode.RETRY: print("No post marked as a failed download")
-            else: print("No new IDs found")
-            return
-        print(f"{str(len(post_ids))} new IDs found")
-        
-        total_success = total_errors = 0
-        newest_id = post_ids[0]
         async with aiohttp.ClientSession() as session:
-            tasks = [asyncio.create_task(download_limited(post, session)) for post in posts]
+            posts = await select_posts(database, session, mode)
+            post_ids = [p['id'] for p in posts]
+            if not post_ids:
+                if mode is DownloadMode.RETRY: print("No post marked as a failed download")
+                else: print("No new IDs found")
+                return
+            print(f"{str(len(post_ids))} new IDs found")
+
+            total_success = total_errors = 0
+            newest_id = post_ids[0]
+
+            tasks = [asyncio.create_task(download_limiter(session, post)) for post in posts]
 
             with alive_bar(len(tasks), title="Downloading posts") as bar:
                 for completed_task in asyncio.as_completed(tasks):
@@ -171,10 +191,8 @@ async def a_main(mode: DownloadMode):
             database.set_newest_downloaded_id(newest_id)
 
         database.commit()
-    print('Done')
-    sleep(3)
-    
-
+    print("Done")
+    sleep(5)
 
 def main(mode:DownloadMode = DownloadMode.NORMAL):
     asyncio.run(a_main(mode))
