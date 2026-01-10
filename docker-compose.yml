@@ -1,0 +1,8 @@
+services:
+  danbooru:
+    build: .
+    env_file:
+      - .env.docker
+    volumes:
+      - ./downloads:/downloads
+      - ./database:/database

@@ -1,5 +1,6 @@
 
 from sys import exit as sys_exit
+from sys import argv as sys_argv
 import os
 from database import Database, PostMetaData
 from dotenv import load_dotenv
@@ -10,9 +11,9 @@ from time import sleep, time
 from enum import Enum, auto
 
 class DownloadMode(Enum):
-    NORMAL = auto()
-    RETRY  = auto()
-    FORCE  = auto()
+    NORMAL = "normal"
+    RETRY  = "retry"
+    FORCE  = "force"
 
 load_dotenv()
 USERNAME = os.getenv('ACCOUNT_NAME') or ''
@@ -20,12 +21,13 @@ API_KEY = os.getenv('API_KEY') or ''
 DB_LOCATION = os.getenv('DB_LOCATION') or ''
 FILE_DIRECTORY = os.getenv('FILE_DIRECTORY') or ''
 
-if FILE_DIRECTORY is None or USERNAME is None or API_KEY is None:
+if FILE_DIRECTORY == '' or USERNAME == '' or API_KEY == '':
     print("Please set the following values in your .env file")
-    if USERNAME is None: print("ACCOUNT_NAME")
-    if API_KEY is None: print("API_KEY")
-    if FILE_DIRECTORY is None: print("FILE_DIRECTORY")
+    if USERNAME == '': print("ACCOUNT_NAME")
+    if API_KEY == '': print("API_KEY")
+    if FILE_DIRECTORY == '': print("FILE_DIRECTORY")
     sys_exit(0)
+
 
 
 if DB_LOCATION is None:
@@ -103,13 +105,9 @@ def build_metadata(post: dict) -> PostMetaData:
     pmd.tag_string_meta = post['tag_string_meta']
     pmd.rating = post['rating']
     pmd.parent_id = post['parent_id']
-    pmd.has_children = post.get('has_children') or False
-    pmd.has_active_children = post.get('has_active_children') or False
+    pmd.has_children = bool(post.get('has_children'))
+    pmd.has_active_children = bool(post.get('has_active_children'))
     pmd.file_ext = post['file_ext']
-    if pmd.has_children is None:
-        pmd.has_children = False
-    if pmd.has_active_children is None:
-        pmd.has_active_children = False
     return pmd
 
 async def download_limiter(session:aiohttp.ClientSession, post_json: dict):
@@ -161,7 +159,7 @@ async def a_main(mode: DownloadMode):
             database.delete_tables()
             database.create_tables()
             database.commit()
-
+        
         async with aiohttp.ClientSession() as session:
             posts = await select_posts(database, session, mode)
             post_ids = [p['id'] for p in posts]
@@ -192,10 +190,24 @@ async def a_main(mode: DownloadMode):
 
         database.commit()
     print("Done")
-    sleep(5)
+    sleep(2)
 
 def main(mode:DownloadMode = DownloadMode.NORMAL):
     asyncio.run(a_main(mode))
 
 if __name__ == "__main__":
-    main(DownloadMode.NORMAL)
+    if len(sys_argv) > 1 and sys_argv[1] in ("-h", "--help"):
+        print("Usage: danbooru [normal|retry|force]")
+        sys_exit(0)
+
+    mode:DownloadMode = DownloadMode.NORMAL
+    if len(sys_argv) == 2:
+        arg = sys_argv[1].lower()
+        try:
+            mode = DownloadMode(arg)
+        except ValueError:
+            raise SystemExit(
+                f"Unknown mode '{arg}'. "
+                f"Valid modes: normal, retry, force"
+            )
+    main(mode)
