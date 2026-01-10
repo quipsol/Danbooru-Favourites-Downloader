@@ -1,4 +1,6 @@
 name: Build and Release Executables
+env:
+  DRY_RUN: true
 
 on:
   workflow_dispatch:
@@ -78,6 +80,7 @@ jobs:
         run: chmod +x danbooru-* || true
 
       - name: Create GitHub Release
+        if: env.DRY_RUN != 'true'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event.inputs.version }}
