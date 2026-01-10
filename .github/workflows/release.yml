@@ -1,0 +1,85 @@
+name: Build and Release Executables
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (e.g. v1.0.0)"
+        required: true
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build executables
+        run: |
+          pyinstaller --onefile danbooru_normal.py --name danbooru-normal
+          pyinstaller --onefile danbooru_retry.py --name danbooru-retry
+          pyinstaller --onefile danbooru_force.py --name danbooru-force
+
+      - name: Rename outputs (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          ren dist\danbooru-normal.exe danbooru-normal-windows.exe
+          ren dist\danbooru-retry.exe danbooru-retry-windows.exe
+          ren dist\danbooru-force.exe danbooru-force-windows.exe
+
+      - name: Rename outputs (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          mv dist/danbooru-normal dist/danbooru-normal-linux
+          mv dist/danbooru-retry dist/danbooru-retry-linux
+          mv dist/danbooru-force dist/danbooru-force-linux
+
+      - name: Rename outputs (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          mv dist/danbooru-normal dist/danbooru-normal-macos
+          mv dist/danbooru-retry dist/danbooru-retry-macos
+          mv dist/danbooru-force dist/danbooru-force-macos
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: danbooru-${{ runner.os }}
+          path: dist/*
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
+      - name: Make binaries executable
+        run: chmod +x danbooru-* || true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.version }}
+          name: Danbooru Downloader ${{ github.event.inputs.version }}
+          files: danbooru-*
