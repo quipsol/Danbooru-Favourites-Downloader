@@ -44,32 +44,67 @@ jobs:
           pyinstaller --onefile danbooru_retry.py --name danbooru-retry
           pyinstaller --onefile danbooru_force.py --name danbooru-force
 
-      - name: Rename outputs (Windows)
+
+      - name: Package Windows ZIP
         if: runner.os == 'Windows'
         run: |
-          ren dist\danbooru-normal.exe danbooru-normal-windows.exe
-          ren dist\danbooru-retry.exe danbooru-retry-windows.exe
-          ren dist\danbooru-force.exe danbooru-force-windows.exe
+          mkdir package
+          move dist\danbooru-normal.exe package\
+          move dist\danbooru-retry.exe package\
+          move dist\danbooru-force.exe package\
 
-      - name: Rename outputs (Linux)
+          echo ACCOUNT_NAME=your_account_name> package\.env
+          echo API_KEY=your_api_key>> package\.env
+          echo DB_LOCATION=.>> package\.env
+          echo FILE_DIRECTORY=./Files>> package\.env
+
+          copy README.md package\
+          tar -a -c -f danbooru-windows.zip package
+
+
+      - name: Package Linux ZIP
         if: runner.os == 'Linux'
         run: |
-          mv dist/danbooru-normal dist/danbooru-normal-linux
-          mv dist/danbooru-retry dist/danbooru-retry-linux
-          mv dist/danbooru-force dist/danbooru-force-linux
+          mkdir package
+          mv dist/danbooru-normal package/
+          mv dist/danbooru-retry package/
+          mv dist/danbooru-force package/
 
-      - name: Rename outputs (macOS)
+          cat <<EOF > package/.env
+          ACCOUNT_NAME=your_account_name
+          API_KEY=your_api_key
+          DB_LOCATION=.
+          FILE_DIRECTORY=./Files
+          EOF
+
+          cp README.md package/
+          chmod +x package/*
+          zip -r danbooru-linux.zip package
+
+      - name: Package macOS ZIP
         if: runner.os == 'macOS'
         run: |
-          mv dist/danbooru-normal dist/danbooru-normal-macos
-          mv dist/danbooru-retry dist/danbooru-retry-macos
-          mv dist/danbooru-force dist/danbooru-force-macos
+          mkdir package
+          mv dist/danbooru-normal package/
+          mv dist/danbooru-retry package/
+          mv dist/danbooru-force package/
 
-      - name: Upload artifacts
+          cat <<EOF > package/.env
+          ACCOUNT_NAME=your_account_name
+          API_KEY=your_api_key
+          DB_LOCATION=.
+          FILE_DIRECTORY=./Files
+          EOF
+
+          cp README.md package/
+          chmod +x package/*
+          zip -r danbooru-macos.zip package
+
+      - name: Upload ZIP artifacts
         uses: actions/upload-artifact@v4
         with:
           name: danbooru-${{ runner.os }}
-          path: dist/*
+          path: danbooru-*.zip
 
   release:
     needs: build
@@ -81,8 +116,9 @@ jobs:
         with:
           merge-multiple: true
 
-      - name: Make binaries executable
-        run: chmod +x danbooru-* || true
+      - name: Generate checksums
+        run: |
+          sha256sum danbooru-*.zip > checksums.txt
 
       - name: Create GitHub Release
         if: ${{ github.event.inputs.dry_run == 'false' && github.event.inputs.version != '' }}
@@ -90,4 +126,6 @@ jobs:
         with:
           tag_name: ${{ github.event.inputs.version }}
           name: Danbooru Downloader ${{ github.event.inputs.version }}
-          files: danbooru-*
+          files: |
+            danbooru-*.zip
+            checksums.txt
