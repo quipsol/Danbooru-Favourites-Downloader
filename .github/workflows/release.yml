@@ -47,19 +47,24 @@ jobs:
 
       - name: Package Windows ZIP
         if: runner.os == 'Windows'
+        shell: pwsh
         run: |
-          mkdir package
-          move dist\danbooru-normal.exe package\
-          move dist\danbooru-retry.exe package\
-          move dist\danbooru-force.exe package\
+          New-Item -ItemType Directory -Force -Path package
 
-          echo ACCOUNT_NAME=your_account_name> package\.env
-          echo API_KEY=your_api_key>> package\.env
-          echo DB_LOCATION=.>> package\.env
-          echo FILE_DIRECTORY=./Files>> package\.env
+          Move-Item dist\danbooru-normal.exe package\
+          Move-Item dist\danbooru-retry.exe package\
+          Move-Item dist\danbooru-force.exe package\
 
-          copy README.md package\
-          tar -a -c -f danbooru-windows.zip package
+          @"
+          ACCOUNT_NAME=your_account_name
+          API_KEY=your_api_key
+          DB_LOCATION=.
+          FILE_DIRECTORY=./Files
+          "@ | Out-File -Encoding ascii package\.env
+
+          Copy-Item README.md package\
+
+          Compress-Archive -Path package\* -DestinationPath danbooru-windows.zip -Force
 
 
       - name: Package Linux ZIP
