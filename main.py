@@ -9,6 +9,10 @@ import aiohttp
 from alive_progress import alive_bar
 from time import sleep, time
 from enum import Enum, auto
+from PIL import Image
+import zipfile
+import json
+import io
 
 class DownloadMode(Enum):
     NORMAL = "normal"
@@ -20,6 +24,7 @@ USERNAME = os.getenv('ACCOUNT_NAME') or ''
 API_KEY = os.getenv('API_KEY') or ''
 DB_LOCATION = os.getenv('DB_LOCATION') or ''
 FILE_DIRECTORY = os.getenv('FILE_DIRECTORY') or ''
+CONVERT_UGOIRA_TO_WEBP = (os.getenv('CONVERT_UGOIRA_TO_WEBP') or 'False') == 'True'
 
 if FILE_DIRECTORY == '' or USERNAME == '' or API_KEY == '':
     print("Please set the following values in your .env file")
@@ -115,12 +120,12 @@ async def download_limiter(session:aiohttp.ClientSession, post_json: dict):
         return await download_file(session, post_json)
 
 async def download_file(session:aiohttp.ClientSession, post_json: dict) -> tuple[bool, dict]:
-    file_url = post_json.get('file_url')
-    if not file_url:
+    file_url = post_json.get('file_url', '')
+    if file_url == '':
         print(f"No file url found for post id {post_json['id']}")
         return (False, post_json)
-    file_ext = post_json.get('file_ext')
-    if not file_ext:
+    file_ext = post_json.get('file_ext', '')
+    if file_ext == '':
         print(f"No original variant found for post id {post_json['id']}")
         return (False, post_json)
     try:
@@ -139,10 +144,10 @@ async def download_file(session:aiohttp.ClientSession, post_json: dict) -> tuple
 
 def handle_result(ret:tuple[bool, dict], database:Database, mode:DownloadMode):
     success, errors = 0, 0
-    ok, post = ret
-    post_id = post['id']
+    ok, post_json = ret
+    post_id = post_json['id']
     if ok:
-        database.insert_post_data(build_metadata(post))
+        database.insert_post_data(build_metadata(post_json))
         if mode is DownloadMode.RETRY:
             database.remove_from_error(post_id)
             success += 1
@@ -150,6 +155,49 @@ def handle_result(ret:tuple[bool, dict], database:Database, mode:DownloadMode):
         database.insert_id_to_error(post_id)
         errors += 1
     return success, errors
+
+def convert_ugoira_to_webp(ret:tuple[bool, dict]) -> None:
+    _, post_json = ret
+    file_name:str =f'Danbooru_{str(post_json['id'])}'
+    file_ext:str = post_json['file_ext']
+    
+    path_to_zip:str = os.path.join(FILE_DIRECTORY, f'{file_name}.{file_ext}')
+    if path_to_zip.startswith('.'):
+        path_to_zip = os.getcwd() + path_to_zip[1:]
+    output_file:str = os.path.join(FILE_DIRECTORY, f'{file_name}.webp')
+    frames:list[Image.Image] = []
+    durations:list[int] | int = []
+    frame_files:list[str] = []
+
+    with zipfile.ZipFile(path_to_zip) as zip: # needs absolute path
+        meta_file = next((f for f in zip.namelist() if f.endswith(".json")), None)
+        
+        if meta_file:
+            meta = json.loads(zip.read(meta_file))
+            frame_files = [f['file'] for f in meta['frames']]
+            durations = [f['delay'] for f in meta['frames']]
+        else:
+            frame_files = sorted(
+                f for f in zip.namelist()
+                if f.lower().endswith(('.png', '.jpg', '.jpeg'))
+            )
+            durations = int(post_json['media_asset'].get('duration', 100 * len(frame_files)) / len(frame_files))
+
+        for f in frame_files:
+            img:Image.Image = Image.open(io.BytesIO(zip.read(f)))
+            frames.append(img.convert('RGBA'))
+            
+    frames[0].save(
+        output_file,
+        save_all=True,
+        append_images=frames[1:],
+        duration=durations,
+        loop=0,
+        format='WEBP',
+        lossless=True
+    )
+    
+    os.remove(path_to_zip)
 
 
 
@@ -177,8 +225,12 @@ async def a_main(mode: DownloadMode):
             with alive_bar(len(tasks), title="Downloading posts") as bar:
                 for completed_task in asyncio.as_completed(tasks):
                     result = await completed_task
-                    print(f"Finished downloading post with ID {result[1]['id']}")
+                    # TODO: md5 checksum check
                     s,e = handle_result(result, database, mode)
+
+                    if result[1]['file_ext'] == 'zip' and CONVERT_UGOIRA_TO_WEBP:
+                        convert_ugoira_to_webp(result)
+                    print(f"Finished downloading post with ID {result[1]['id']}")
                     total_success += s
                     total_errors += e
                     bar()
@@ -193,6 +245,10 @@ async def a_main(mode: DownloadMode):
     sleep(2)
 
 def main(mode:DownloadMode = DownloadMode.NORMAL):
+    if not os.path.exists(DB_LOCATION):
+        os.makedirs(DB_LOCATION)
+    if not os.path.exists(FILE_DIRECTORY):
+        os.makedirs(FILE_DIRECTORY)
     asyncio.run(a_main(mode))
 
 if __name__ == "__main__":

@@ -60,6 +60,7 @@ jobs:
           API_KEY=your_api_key
           DB_LOCATION=.
           FILE_DIRECTORY=./Files
+          CONVERT_UGOIRA_TO_WEBP=True
           "@ | Out-File -Encoding ascii package\.env
 
           Copy-Item README.md package\
@@ -80,6 +81,7 @@ jobs:
           API_KEY=your_api_key
           DB_LOCATION=.
           FILE_DIRECTORY=./Files
+          CONVERT_UGOIRA_TO_WEBP=True
           EOF
 
           cp README.md package/
@@ -99,6 +101,7 @@ jobs:
           API_KEY=your_api_key
           DB_LOCATION=.
           FILE_DIRECTORY=./Files
+          CONVERT_UGOIRA_TO_WEBP=True
           EOF
 
           cp README.md package/
