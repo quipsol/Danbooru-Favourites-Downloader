@@ -1,4 +1,3 @@
-
 from sys import exit as sys_exit
 from sys import argv as sys_argv
 import os
@@ -13,6 +12,7 @@ from PIL import Image
 import zipfile
 import json
 import io
+from hashlib import md5
 
 class DownloadMode(Enum):
     NORMAL = "normal"
@@ -32,8 +32,6 @@ if FILE_DIRECTORY == '' or USERNAME == '' or API_KEY == '':
     if API_KEY == '': print("API_KEY")
     if FILE_DIRECTORY == '': print("FILE_DIRECTORY")
     sys_exit(0)
-
-
 
 if DB_LOCATION is None:
     DB_LOCATION = os.getcwd()
@@ -142,11 +140,24 @@ async def download_file(session:aiohttp.ClientSession, post_json: dict) -> tuple
         return (False, post_json)
     return (True, post_json)
 
-def handle_result(ret:tuple[bool, dict], database:Database, mode:DownloadMode):
+
+
+async def md5_check(ret:tuple[bool, dict]) -> bool:
+    _, post_json = ret
+    file_name:str =f'Danbooru_{str(post_json['id'])}'
+    file_ext:str = post_json['file_ext']
+    path_to_file:str = os.path.join(FILE_DIRECTORY, f'{file_name}.{file_ext}')
+    md5_result = md5(open(path_to_file,'rb').read()).hexdigest()
+    retVal:bool = post_json['md5'] == md5_result
+    if not retVal:
+        os.remove(path_to_file)
+    return retVal
+
+async def handle_result(ret:tuple[bool, dict], database:Database, mode:DownloadMode):
     success, errors = 0, 0
-    ok, post_json = ret
+    donwload_successful, post_json = ret
     post_id = post_json['id']
-    if ok:
+    if donwload_successful:
         database.insert_post_data(build_metadata(post_json))
         if mode is DownloadMode.RETRY:
             database.remove_from_error(post_id)
@@ -156,7 +167,7 @@ def handle_result(ret:tuple[bool, dict], database:Database, mode:DownloadMode):
         errors += 1
     return success, errors
 
-def convert_ugoira_to_webp(ret:tuple[bool, dict]) -> None:
+async def convert_ugoira_to_webp(ret:tuple[bool, dict]) -> None:
     _, post_json = ret
     file_name:str =f'Danbooru_{str(post_json['id'])}'
     file_ext:str = post_json['file_ext']
@@ -225,12 +236,17 @@ async def a_main(mode: DownloadMode):
             with alive_bar(len(tasks), title="Downloading posts") as bar:
                 for completed_task in asyncio.as_completed(tasks):
                     result = await completed_task
-                    # TODO: md5 checksum check
-                    s,e = handle_result(result, database, mode)
-
-                    if result[1]['file_ext'] == 'zip' and CONVERT_UGOIRA_TO_WEBP:
-                        convert_ugoira_to_webp(result)
-                    print(f"Finished downloading post with ID {result[1]['id']}")
+                    
+                    md5_check_successful = await md5_check(result)
+                    if not md5_check_successful:
+                        result = (False, result[1])
+                    s,e = await handle_result(result, database, mode)
+                    if result[0] and result[1]['file_ext'] == 'zip' and CONVERT_UGOIRA_TO_WEBP:
+                        await convert_ugoira_to_webp(result)
+                    if result[0]:
+                        print(f"Finished downloading post with ID {result[1]['id']}")
+                    else:
+                        print(f"There was an issue downloading post with ID {result[1]['id']}")
                     total_success += s
                     total_errors += e
                     bar()
@@ -243,6 +259,7 @@ async def a_main(mode: DownloadMode):
         database.commit()
     print("Done")
     sleep(2)
+
 
 def main(mode:DownloadMode = DownloadMode.NORMAL):
     if not os.path.exists(DB_LOCATION):
