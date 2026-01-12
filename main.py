@@ -192,12 +192,12 @@ async def convert_ugoira_to_webp(ret:tuple[bool, dict]) -> None:
                 f for f in zip.namelist()
                 if f.lower().endswith(('.png', '.jpg', '.jpeg'))
             )
-            durations = int(post_json['media_asset'].get('duration', 100 * len(frame_files)) / len(frame_files))
+            durations = int(post_json['media_asset'].get('duration', len(frame_files)) * 1000 / len(frame_files))
 
         for f in frame_files:
             img:Image.Image = Image.open(io.BytesIO(zip.read(f)))
             frames.append(img.convert('RGBA'))
-            
+
     frames[0].save(
         output_file,
         save_all=True,
@@ -207,7 +207,6 @@ async def convert_ugoira_to_webp(ret:tuple[bool, dict]) -> None:
         format='WEBP',
         lossless=True
     )
-    
     os.remove(path_to_zip)
 
 
