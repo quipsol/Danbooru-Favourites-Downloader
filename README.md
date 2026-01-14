@@ -63,7 +63,7 @@ docker compose run danbooru [normal|retry|force]
 
 ## Option 2: Pre-built Executables (No Python/Docker Required)
 
-For users who don’t want to run Python or Docker, **pre-packaged executables are available**.
+For users who don't want to run Python or Docker, **pre-packaged executables are available**.
 
 ### [Downloads](https://github.com/quipsol/Danbooru-Favourites-Downloader/releases)
 
