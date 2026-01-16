@@ -141,7 +141,6 @@ async def download_file(session:aiohttp.ClientSession, post_json: dict) -> tuple
     return (True, post_json)
 
 
-
 async def md5_check(ret:tuple[bool, dict]) -> bool:
     _, post_json = ret
     file_name:str =f'Danbooru_{str(post_json['id'])}'
@@ -170,9 +169,8 @@ async def handle_result(ret:tuple[bool, dict], database:Database, mode:DownloadM
 async def convert_ugoira_to_webp(ret:tuple[bool, dict]) -> None:
     _, post_json = ret
     file_name:str =f'Danbooru_{str(post_json['id'])}'
-    file_ext:str = post_json['file_ext']
     
-    path_to_zip:str = os.path.join(FILE_DIRECTORY, f'{file_name}.{file_ext}')
+    path_to_zip:str = os.path.join(FILE_DIRECTORY, f'{file_name}.zip')
     if path_to_zip.startswith('.'):
         path_to_zip = os.getcwd() + path_to_zip[1:]
     output_file:str = os.path.join(FILE_DIRECTORY, f'{file_name}.webp')
@@ -236,12 +234,17 @@ async def a_main(mode: DownloadMode):
                 for completed_task in asyncio.as_completed(tasks):
                     result = await completed_task
                     
-                    md5_check_successful = await md5_check(result)
-                    if not md5_check_successful:
+                    was_md5_check_successful = await md5_check(result)
+                    if not was_md5_check_successful:
                         result = (False, result[1])
-                    s,e = await handle_result(result, database, mode)
                     if result[0] and result[1]['file_ext'] == 'zip' and CONVERT_UGOIRA_TO_WEBP:
+                        result[1]['file_ext'] = 'webp'
                         await convert_ugoira_to_webp(result)
+                        file_name:str =f'Danbooru_{str(result[1]['id'])}'
+                        path_to_file:str = os.path.join(FILE_DIRECTORY, f'{file_name}.webp')
+                        md5_result = md5(open(path_to_file,'rb').read()).hexdigest()
+                        result[1]['md5'] = md5_result
+                    s,e = await handle_result(result, database, mode)
                     if result[0]:
                         print(f"Finished downloading post with ID {result[1]['id']}")
                     else:
