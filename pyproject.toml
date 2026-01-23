@@ -1,5 +1,5 @@
 [project]
-name = "danbooru_file_downloader"
+name = "danbooru_favourites_downloader"
 version = "1.0.3"
 description = "A package to download files from a danbooru.donmai.us account"
 readme = "README.md"
@@ -15,4 +15,4 @@ package-dir = {"" = "src"}
 where = ["src"]
 
 [project.scripts]
-package = "danbooru_file_downloader.main:main"
+package = "danbooru_favourites_downloader.main:main"

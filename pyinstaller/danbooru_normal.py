@@ -1,4 +1,4 @@
-from src.danbooru_file_downloader import main as _main
+from src.danbooru_favourites_downloader import main as _main
 
 def main():
     _main.main(_main.DownloadMode.NORMAL)
