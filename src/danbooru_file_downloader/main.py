@@ -1,7 +1,7 @@
 from sys import exit as sys_exit
 from sys import argv as sys_argv
 import os
-from database import Database, PostMetaData
+from .database import Database, PostMetaData
 from dotenv import load_dotenv
 import asyncio
 import aiohttp

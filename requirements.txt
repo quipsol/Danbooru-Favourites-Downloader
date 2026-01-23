@@ -4,3 +4,5 @@ aiohttp
 alive-progress
 pyinstaller
 pillow
+aioresponses
+pytest

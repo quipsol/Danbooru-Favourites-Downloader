@@ -15,5 +15,8 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
-ENTRYPOINT ["python", "main.py" ]
+RUN pip install --no-cache-dir -e .
+
+#ENTRYPOINT ["python", "-m", "package.main" ]
+ENTRYPOINT ["package"]
 CMD ["normal"]

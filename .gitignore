@@ -11,9 +11,9 @@ images/
 # Ignore specific files
 .env
 .env.docker
-test.py
 
 # Ignore specific file-types
 *.pyc
 *.spec
 *.db
+*.egg-info

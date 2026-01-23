@@ -37,12 +37,13 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install pyinstaller
+          pip install .
 
       - name: Build executables
         run: |
-          pyinstaller --onefile danbooru_normal.py --name danbooru-normal
-          pyinstaller --onefile danbooru_retry.py --name danbooru-retry
-          pyinstaller --onefile danbooru_force.py --name danbooru-force
+          pyinstaller --onefile pyinstaller/danbooru_normal.py --name danbooru-normal
+          pyinstaller --onefile pyinstaller/danbooru_retry.py --name danbooru-retry
+          pyinstaller --onefile pyinstaller/danbooru_force.py --name danbooru-force
 
 
       - name: Package Windows ZIP
