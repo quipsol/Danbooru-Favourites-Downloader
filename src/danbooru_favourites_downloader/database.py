@@ -16,8 +16,6 @@ class PostMetaData:
     has_active_children: bool = False
     file_ext: str = ""
 
-    def __init__(self, post_id: int):
-        self.post_id = post_id
 
 class Database:
     def __init__(self, path):
@@ -53,7 +51,18 @@ class Database:
         self.cur.execute(sql_create_table_queries[0])
         self.cur.execute(sql_create_table_queries[1])
         self.cur.execute(sql_create_table_queries[2])
-        self.con.commit()
+
+    def delete_tables(self) -> None: 
+        sql_drop_table_queries = [ 
+        """DELETE FROM error;""",
+        """DELETE FROM posts;""",
+        """DELETE FROM key_value_pairs;"""
+        ]
+
+        self.cur.execute(sql_drop_table_queries[0])
+        self.cur.execute(sql_drop_table_queries[1])
+        self.cur.execute(sql_drop_table_queries[2])
+
 
     def insert_post_data(self, data:PostMetaData):
         query_data = (data.post_id,
@@ -85,12 +94,6 @@ class Database:
                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?)"""
         self.cur.execute(query, query_data)
 
-    def insert_id_to_error(self, id:int):
-        query_data = str(id)
-        query = """INSERT INTO error (
-                    post_id)
-                VALUES (?)"""
-        self.cur.execute(query, query_data)
 
     def set_newest_downloaded_id(self, id:int):
         query_data = ("newest_id", str(id))
@@ -98,15 +101,22 @@ class Database:
                         VALUES(?,?)
                         ON CONFLICT (key) DO UPDATE SET value=excluded.value"""
         self.cur.execute(query, query_data)
-        self.con.commit()
 
-    def get_newest_downlaoded_id(self) -> int:
+    def get_newest_downloaded_id(self) -> int:
         ret = self.cur.execute("SELECT value FROM key_value_pairs WHERE key='newest_id'")
         ret_tuple = ret.fetchone()
         if ret_tuple is None:
             return 0
         else:
             return int(ret_tuple[0])
+
+
+    def insert_id_to_error(self, id:int):
+        query_data = (str(id),)
+        query = """INSERT INTO error (
+                    post_id)
+                VALUES (?)"""
+        self.cur.execute(query, query_data)
 
     def get_error_ids(self) -> list:
         query_data = ()
@@ -120,22 +130,8 @@ class Database:
 
     def remove_from_error(self, id) -> None:
         query_data = (id,)
-        print("rtertertertertertet")
         query = """DELETE FROM error WHERE post_id = ?"""
         self.cur.execute(query, query_data)
-
-    def delete_tables(self) -> None: 
-        sql_drop_table_queries = [ 
-        """DELETE FROM error;""",
-        """DELETE FROM posts;""",
-        """DELETE FROM key_value_pairs;"""
-        ]
-
-        self.cur.execute(sql_drop_table_queries[0])
-        self.cur.execute(sql_drop_table_queries[1])
-        self.cur.execute(sql_drop_table_queries[2])
-        self.con.commit()
-
 
 
     def commit(self):

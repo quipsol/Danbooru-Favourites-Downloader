@@ -6,3 +6,4 @@ pyinstaller
 pillow
 aioresponses
 pytest
+pytest-asyncio

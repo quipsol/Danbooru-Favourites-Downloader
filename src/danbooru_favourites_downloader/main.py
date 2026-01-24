@@ -59,18 +59,19 @@ async def get_all_error_posts(session:aiohttp.ClientSession, database:Database)-
             await asyncio.sleep(max(0, RATE_LIMIT_INTERVAL - (time() - start))) # 1 request per second
     return posts
 
-async def get_all_new_posts(session:aiohttp.ClientSession, latest_id: int = 0) -> list[dict]:
+async def get_all_new_posts(session:aiohttp.ClientSession, auth: aiohttp.BasicAuth | None = authenticator,
+                            latest_id: int = 0, url:str = base_url + search_result_endpoint, un:str = USERNAME) -> list[dict]:
     page = 1
     final_result = []
     end = 0
     while True:
         start = time()
         params = {
-            'tags': f'ordfav:{USERNAME}',
+            'tags': f'ordfav:{un}',
             'limit': 20,
             'page': page
         }
-        async with session.get(base_url + search_result_endpoint, params=params, auth=authenticator) as resp:
+        async with session.get(url, params=params, auth=auth) as resp:
             resp.raise_for_status()
             result = await resp.json()
 
@@ -87,9 +88,10 @@ async def get_all_new_posts(session:aiohttp.ClientSession, latest_id: int = 0) -
             await asyncio.sleep(max(0, RATE_LIMIT_INTERVAL - (time() - start))) # Max 1 request per second
     return final_result
         
-async def select_posts(database:Database, session, mode:DownloadMode)->list[dict]:
+async def select_posts(database:Database, session, mode:DownloadMode,
+                       un:str = USERNAME)->list[dict]:
     if mode is DownloadMode.NORMAL:
-        return await get_all_new_posts(session, database.get_newest_downlaoded_id())
+        return await get_all_new_posts(session=session, latest_id=database.get_newest_downloaded_id(), un=un)
     elif mode is DownloadMode.RETRY:
         print("Gathering IDs of posts that failed to download before")
         return await get_all_error_posts(session, database)
@@ -160,7 +162,7 @@ async def handle_result(ret:tuple[bool, dict], database:Database, mode:DownloadM
         database.insert_post_data(build_metadata(post_json))
         if mode is DownloadMode.RETRY:
             database.remove_from_error(post_id)
-            success += 1
+        success += 1
     elif mode is not DownloadMode.RETRY:
         database.insert_id_to_error(post_id)
         errors += 1
@@ -214,7 +216,7 @@ async def a_main(mode: DownloadMode):
         if mode is DownloadMode.FORCE:
             database.delete_tables()
             database.create_tables()
-            database.commit()
+        database.commit()
         
         async with aiohttp.ClientSession() as session:
             posts = await select_posts(database, session, mode)
@@ -257,7 +259,6 @@ async def a_main(mode: DownloadMode):
         if total_success > 0: print(f"Successfully downloaded {total_success} IDs!")
         if mode is not DownloadMode.RETRY:
             database.set_newest_downloaded_id(newest_id)
-
         database.commit()
     print("Done")
     sleep(2)
