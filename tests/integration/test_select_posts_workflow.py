@@ -4,21 +4,15 @@ from aioresponses import aioresponses, CallbackResult
 from yarl import URL
 import re
 
-from danbooru_favourites_downloader.main import select_posts, DownloadMode
-from danbooru_favourites_downloader.database import Database, PostMetaData
+from danbooru_favourites_downloader.main import select_posts, DownloadMode, Context
 
-@pytest.fixture
-def db():
-    database = Database(":memory:")
-    yield database
-    database.close()
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("latest_id",[(22), (0),(9999999)])
-async def test_select_posts_normal_mode(db:Database, latest_id:int):
+async def test_select_posts_normal_mode(context:Context, latest_id:int):
     if latest_id != 0: # 0 should be default return value for db.get_newest_download_id() => dont write it into database
-        db.set_newest_downloaded_id(latest_id)
-        db.commit()
+        context.database.set_newest_downloaded_id(latest_id)
+        context.database.commit()
 
     pages = [
         [{"id": 105}, {"id": 67}, {"id": 100}, {"id": 99}],
@@ -31,22 +25,14 @@ async def test_select_posts_normal_mode(db:Database, latest_id:int):
         payload = pages[call_count]
         call_count += 1
         return CallbackResult(status=200, payload=payload)
+    
     url_pattern = re.compile(r"https://danbooru\.donmai\.us/posts\.json.*")
-    un = "username"
+
 
     with aioresponses() as mocked:
         mocked.get(url_pattern, callback=callback, repeat=True)
-        async with aiohttp.ClientSession() as session:
-            
-
-            posts = await select_posts(
-                database=db,
-                session=session,
-                mode=DownloadMode.NORMAL,
-                un=un
-            )
-
-
+        posts = await select_posts(context)
+    
     assert len(mocked.requests) == (2 if latest_id == 22 else 3)
     post_ids = [p["id"] for p in posts]
     assert post_ids == ([105, 67, 100, 99, 11] if latest_id == 22 else [105, 67, 100, 99, 11, 22, 33, 44])
@@ -64,9 +50,10 @@ async def test_select_posts_normal_mode(db:Database, latest_id:int):
           )
      ]
 )
-async def test_select_posts_retry_mode(db:Database, error_ids:list[int]):
+async def test_select_posts_retry_mode(context:Context, error_ids:list[int]):
+    context.mode = DownloadMode.RETRY
     for id in error_ids:
-         db.insert_id_to_error(id)
+         context.database.insert_id_to_error(id)
     
     url = "https://danbooru.donmai.us/posts/{0}.json"
     un = "username"
@@ -77,14 +64,7 @@ async def test_select_posts_retry_mode(db:Database, error_ids:list[int]):
                 url.format(id),
                 payload={"id": id, "other": "ignore this"}
             )
-        
-        async with aiohttp.ClientSession() as session:
-            posts = await select_posts(
-                database=db,
-                session=session,
-                mode=DownloadMode.RETRY,
-                un=un
-            )
+        posts = await select_posts(context)
     
     post_ids = [p["id"] for p in posts]
     assert post_ids == error_ids
@@ -92,13 +72,14 @@ async def test_select_posts_retry_mode(db:Database, error_ids:list[int]):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("latest_id",[(22), (0)])
-async def test_select_posts_force_mode(db:Database, latest_id:int):
+async def test_select_posts_force_mode(context:Context, latest_id:int):
     '''
     force mode should always grab all IDs and ignore any latest_id that might exist inside the database
     '''
+    context.mode = DownloadMode.FORCE
     if latest_id != 0:
-        db.set_newest_downloaded_id(latest_id)
-        db.commit()
+        context.database.set_newest_downloaded_id(latest_id)
+        context.database.commit()
 
     pages = [
         [{"id": 105}, {"id": 67}, {"id": 100}, {"id": 99}],
@@ -113,20 +94,13 @@ async def test_select_posts_force_mode(db:Database, latest_id:int):
         call_count += 1
         return CallbackResult(status=200, payload=payload)
 
-
-    un = "username"
     url_pattern = re.compile(r"https://danbooru\.donmai\.us/posts\.json.*")
 
     with aioresponses() as mocked:
         mocked.get(url_pattern, callback=callback, repeat=True)
 
         async with aiohttp.ClientSession() as session:
-            posts = await select_posts(
-                database=db,
-                session=session,
-                mode=DownloadMode.FORCE,
-                un=un
-            )
+            posts = await select_posts(context)
 
     assert call_count == 3
     assert len(mocked.requests) == 3

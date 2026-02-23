@@ -2,16 +2,9 @@ from typing import Any
 import pytest
 from unittest.mock import AsyncMock, Mock, patch
 
-from danbooru_favourites_downloader.main import select_posts, DownloadMode
+from danbooru_favourites_downloader.main import select_posts, DownloadMode, Context
 from danbooru_favourites_downloader.database import Database
-
-@pytest.fixture
-def fake_db():
-    return Mock()
-
-@pytest.fixture
-def fake_session():
-    return Mock()
+from tests.utils import as_mock
 
 @pytest.fixture
 def fake_data():
@@ -37,36 +30,38 @@ def fake_data():
         (
             DownloadMode.NORMAL,
             "get_all_new_posts",
-            lambda session, db: ((),{"session": session, "latest_id": 123}),
+            #lambda session, db: ((),{"session": session, "latest_id": 123, "un": "username"}),
+            lambda v: ((v, 123),{}),
             True,
         ),
         (
             DownloadMode.RETRY,
             "get_all_error_posts",
-            lambda session, db: ((session, db),{}),
+            lambda v: ((v,),{}),
             False,
         ),
         (
             DownloadMode.FORCE,
             "get_all_new_posts",
-            lambda session, db: ((session,),{}),
+            lambda v: ((v,),{}),
             False,
         ),
     ],
 )
-async def test_select_posts(fake_db, fake_session, fake_data,
+async def test_select_posts(context: Context, fake_data,
                             mode, expected_fn, expected_kw_args, expects_db_call):
-    
-    fake_db.get_newest_downloaded_id.return_value = 123
+    context.mode = mode
+
+    as_mock(context.database.get_newest_downloaded_id).return_value = 123
 
     with (patch("danbooru_favourites_downloader.main.get_all_new_posts", return_value=fake_data) as mock_new,
           patch("danbooru_favourites_downloader.main.get_all_error_posts", return_value=fake_data) as mock_error):
-        result = await select_posts(fake_db, fake_session, mode)
+        result = await select_posts(context)
 
     assert result == fake_data
-    assert fake_db.get_newest_downloaded_id.call_count == (1 if expects_db_call else 0)
+    assert as_mock(context.database.get_newest_downloaded_id).call_count == (1 if expects_db_call else 0)
     mock = mock_new if expected_fn == "get_all_new_posts" else mock_error
-    args, kwargs = expected_kw_args(fake_session, fake_db)
+    args, kwargs = expected_kw_args(context)
     mock.assert_called_once_with(*args, **kwargs)
 
 

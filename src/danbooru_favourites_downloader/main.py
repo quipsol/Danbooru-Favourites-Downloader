@@ -13,65 +13,68 @@ import zipfile
 import json
 import io
 from hashlib import md5
+from dataclasses import dataclass, field
 
 class DownloadMode(Enum):
+    NONE = "none"
     NORMAL = "normal"
     RETRY  = "retry"
     FORCE  = "force"
 
+@dataclass
+class Environment:
+    account_name: str
+    api_key: str
+    db_location: str
+    file_directory: str
+    convert_ugoira_to_webp: bool
+
+@dataclass
+class Urls:
+    base_url: str
+    search_result_endpoint: str # requires post:index key access
+    specific_post_endpoint: str # requires post:show  key access
+
+@dataclass
+class Context:
+    environment: Environment
+    database: Database
+    session: aiohttp.ClientSession
+    mode: DownloadMode
+    authenticator: aiohttp.BasicAuth
+    urls: Urls
+    rate_limit_interval: float
+    semaphore: asyncio.Semaphore
+
 load_dotenv()
-USERNAME = os.getenv('ACCOUNT_NAME') or ''
-API_KEY = os.getenv('API_KEY') or ''
-DB_LOCATION = os.getenv('DB_LOCATION') or ''
-FILE_DIRECTORY = os.getenv('FILE_DIRECTORY') or ''
-CONVERT_UGOIRA_TO_WEBP = (os.getenv('CONVERT_UGOIRA_TO_WEBP') or 'False') == 'True'
 
-if FILE_DIRECTORY == '' or USERNAME == '' or API_KEY == '':
-    print("Please set the following values in your .env file")
-    if USERNAME == '': print("ACCOUNT_NAME")
-    if API_KEY == '': print("API_KEY")
-    if FILE_DIRECTORY == '': print("FILE_DIRECTORY")
-    sys_exit(0)
-
-if DB_LOCATION is None:
-    DB_LOCATION = os.getcwd()
-
-RATE_LIMIT_INTERVAL = 1.0 # only 1 request per second
-semaphore = asyncio.Semaphore(10)
-authenticator = aiohttp.BasicAuth(login=USERNAME, password=API_KEY)
-base_url = 'https://danbooru.donmai.us'
-search_result_endpoint = '/posts.json' # needs post:index key access
-specific_post_endpoint = '/posts/{0}.json' # needs post:show key access
-
-
-async def get_all_error_posts(session:aiohttp.ClientSession, database:Database)-> list[dict]:
-    error_ids = database.get_error_ids()
+async def get_all_error_posts(context:Context)-> list[dict]:
+    error_ids = context.database.get_error_ids()
     if len(error_ids) == 0:
         return []
     posts = []
     end = 0
     for id in error_ids:
         start = time()
-        async with session.get(base_url + specific_post_endpoint.format(id), auth=authenticator) as resp:
+        async with context.session.get(context.urls.base_url + context.urls.specific_post_endpoint.format(id), auth=context.authenticator) as resp:
             resp.raise_for_status()
             posts.append(await resp.json())
         if len(posts) > 100: # Make use of burst pool
-            await asyncio.sleep(max(0, RATE_LIMIT_INTERVAL - (time() - start))) # 1 request per second
+            await asyncio.sleep(max(0, context.rate_limit_interval - (time() - start))) # 1 request per second
     return posts
 
-async def get_all_new_posts(session:aiohttp.ClientSession, auth: aiohttp.BasicAuth | None = authenticator,
-                            latest_id: int = 0, url:str = base_url + search_result_endpoint, un:str = USERNAME) -> list[dict]:
+async def get_all_new_posts(context: Context, latest_id: int = 0, ) -> list[dict]:
     page = 1
     final_result = []
     end = 0
     while True:
         start = time()
         params = {
-            'tags': f'ordfav:{un}',
+            'tags': f'ordfav:{context.environment.account_name}',
             'limit': 20,
             'page': page
         }
-        async with session.get(url, params=params, auth=auth) as resp:
+        async with context.session.get(context.urls.base_url + context.urls.search_result_endpoint, params=params, auth=context.authenticator) as resp:
             resp.raise_for_status()
             result = await resp.json()
 
@@ -85,18 +88,17 @@ async def get_all_new_posts(session:aiohttp.ClientSession, auth: aiohttp.BasicAu
         final_result.extend(result)
         page += 1
         if page > 100: # Make use of burst pool
-            await asyncio.sleep(max(0, RATE_LIMIT_INTERVAL - (time() - start))) # Max 1 request per second
+            await asyncio.sleep(max(0, context.rate_limit_interval - (time() - start))) # Max 1 request per second
     return final_result
         
-async def select_posts(database:Database, session, mode:DownloadMode,
-                       un:str = USERNAME)->list[dict]:
-    if mode is DownloadMode.NORMAL:
-        return await get_all_new_posts(session=session, latest_id=database.get_newest_downloaded_id(), un=un)
-    elif mode is DownloadMode.RETRY:
+async def select_posts(context:Context)->list[dict]:
+    if context.mode is DownloadMode.NORMAL:
+        return await get_all_new_posts(context, context.database.get_newest_downloaded_id())
+    elif context.mode is DownloadMode.RETRY:
         print("Gathering IDs of posts that failed to download before")
-        return await get_all_error_posts(session, database)
+        return await get_all_error_posts(context)
     else: # DownloadMode.FORCE
-        return await get_all_new_posts(session)
+        return await get_all_new_posts(context)
 
 
 
@@ -115,11 +117,11 @@ def build_metadata(post: dict) -> PostMetaData:
     pmd.file_ext = post['file_ext']
     return pmd
 
-async def download_limiter(session:aiohttp.ClientSession, post_json: dict):
-    async with semaphore:
-        return await download_file(session, post_json)
+async def download_limiter(context: Context, post_json: dict):
+    async with context.semaphore:
+        return await download_file(context, post_json)
 
-async def download_file(session:aiohttp.ClientSession, post_json: dict) -> tuple[bool, dict]:
+async def download_file(context: Context, post_json: dict) -> tuple[bool, dict]:
     file_url = post_json.get('file_url', '')
     if file_url == '':
         print(f"No file url found for post id {post_json['id']}")
@@ -129,10 +131,10 @@ async def download_file(session:aiohttp.ClientSession, post_json: dict) -> tuple
         print(f"No original variant found for post id {post_json['id']}")
         return (False, post_json)
     try:
-        async with session.get(file_url) as resp:
+        async with context.session.get(file_url) as resp:
             resp.raise_for_status()
             file_name = f"Danbooru_{str(post_json['id'])}.{file_ext}"
-            complete_path = os.path.join(FILE_DIRECTORY, file_name)
+            complete_path = os.path.join(context.environment.file_directory, file_name)
 
             with open(complete_path, "wb") as f:
                 async for chunk in resp.content.iter_chunked(8192):
@@ -143,39 +145,39 @@ async def download_file(session:aiohttp.ClientSession, post_json: dict) -> tuple
     return (True, post_json)
 
 
-async def md5_check(ret:tuple[bool, dict]) -> bool:
+async def md5_check(context:Context, ret:tuple[bool, dict]) -> bool:
     _, post_json = ret
     file_name:str =f'Danbooru_{str(post_json['id'])}'
     file_ext:str = post_json['file_ext']
-    path_to_file:str = os.path.join(FILE_DIRECTORY, f'{file_name}.{file_ext}')
+    path_to_file:str = os.path.join(context.environment.file_directory, f'{file_name}.{file_ext}')
     md5_result = md5(open(path_to_file,'rb').read()).hexdigest()
     retVal:bool = post_json['md5'] == md5_result
     if not retVal:
         os.remove(path_to_file)
     return retVal
 
-async def handle_result(ret:tuple[bool, dict], database:Database, mode:DownloadMode):
+async def handle_result(context:Context, ret:tuple[bool, dict]):
     success, errors = 0, 0
     donwload_successful, post_json = ret
     post_id = post_json['id']
     if donwload_successful:
-        database.insert_post_data(build_metadata(post_json))
-        if mode is DownloadMode.RETRY:
-            database.remove_from_error(post_id)
+        context.database.insert_post_data(build_metadata(post_json))
+        if context.mode is DownloadMode.RETRY:
+            context.database.remove_from_error(post_id)
         success += 1
-    elif mode is not DownloadMode.RETRY:
-        database.insert_id_to_error(post_id)
+    elif context.mode is not DownloadMode.RETRY:
+        context.database.insert_id_to_error(post_id)
         errors += 1
     return success, errors
 
-async def convert_ugoira_to_webp(ret:tuple[bool, dict]) -> None:
+async def convert_ugoira_to_webp(context:Context, ret:tuple[bool, dict]) -> None:
     _, post_json = ret
     file_name:str =f'Danbooru_{str(post_json['id'])}'
     
-    path_to_zip:str = os.path.join(FILE_DIRECTORY, f'{file_name}.zip')
+    path_to_zip:str = os.path.join(context.environment.file_directory, f'{file_name}.zip')
     if path_to_zip.startswith('.'):
         path_to_zip = os.getcwd() + path_to_zip[1:]
-    output_file:str = os.path.join(FILE_DIRECTORY, f'{file_name}.webp')
+    output_file:str = os.path.join(context.environment.file_directory, f'{file_name}.webp')
     frames:list[Image.Image] = []
     durations:list[int] | int = []
     frame_files:list[str] = []
@@ -209,17 +211,44 @@ async def convert_ugoira_to_webp(ret:tuple[bool, dict]) -> None:
     )
     os.remove(path_to_zip)
 
+def validate_environment_variables(env:Environment):
+    if env.file_directory == '' or env.account_name == '' or env.api_key == '':
+        print("Please set the following values in your .env file")
+        if env.account_name == '': print("ACCOUNT_NAME")
+        if env.api_key == '': print("API_KEY")
+        if env.file_directory == '': print("FILE_DIRECTORY")
+        sys_exit(0)
+    if env.db_location == '':
+        env.db_location = os.getcwd()
+        print("DB_LOCATION was missing, using cwd instead")
+    
+    if not os.path.exists(env.db_location):
+        os.makedirs(env.db_location)
+    if not os.path.exists(env.file_directory):
+        os.makedirs(env.file_directory)
 
 
 async def a_main(mode: DownloadMode):
-    with Database(os.path.join(DB_LOCATION, "post-downloads.db")) as database:
-        if mode is DownloadMode.FORCE:
-            database.delete_tables()
-            database.create_tables()
-        database.commit()
-        
+    env: Environment = Environment(os.getenv('ACCOUNT_NAME') or '',
+                                   os.getenv('API_KEY') or '',
+                                   os.getenv('DB_LOCATION') or '',
+                                   os.getenv('FILE_DIRECTORY') or '',
+                                   (os.getenv('CONVERT_UGOIRA_TO_WEBP') or 'False') == 'True')
+    validate_environment_variables(env)
+
+    with Database(os.path.join(env.db_location, "post-downloads.db")) as database:        
         async with aiohttp.ClientSession() as session:
-            posts = await select_posts(database, session, mode)
+            authenticator = aiohttp.BasicAuth(login=env.account_name, password=env.api_key)
+            urls:Urls = Urls('https://danbooru.donmai.us', '/posts.json', '/posts/{0}.json')
+            context:Context = Context(env, database, session, mode, authenticator, urls, 1.0, asyncio.Semaphore(10))
+
+            if context.mode is DownloadMode.FORCE:
+                database.delete_tables()
+                database.create_tables()
+            database.commit()
+
+            posts = await select_posts(context)
+
             post_ids = [p['id'] for p in posts]
             if not post_ids:
                 if mode is DownloadMode.RETRY: print("No post marked as a failed download")
@@ -230,23 +259,23 @@ async def a_main(mode: DownloadMode):
             total_success = total_errors = 0
             newest_id = post_ids[0]
 
-            tasks = [asyncio.create_task(download_limiter(session, post)) for post in posts]
+            tasks = [asyncio.create_task(download_limiter(context, post)) for post in posts]
 
             with alive_bar(len(tasks), title="Downloading posts") as bar:
                 for completed_task in asyncio.as_completed(tasks):
                     result = await completed_task
                     
-                    was_md5_check_successful = await md5_check(result)
+                    was_md5_check_successful = await md5_check(context, result)
                     if not was_md5_check_successful:
                         result = (False, result[1])
-                    if result[0] and result[1]['file_ext'] == 'zip' and CONVERT_UGOIRA_TO_WEBP:
+                    if result[0] and result[1]['file_ext'] == 'zip' and context.environment.convert_ugoira_to_webp:
                         result[1]['file_ext'] = 'webp'
-                        await convert_ugoira_to_webp(result)
+                        await convert_ugoira_to_webp(context, result)
                         file_name:str =f'Danbooru_{str(result[1]['id'])}'
-                        path_to_file:str = os.path.join(FILE_DIRECTORY, f'{file_name}.webp')
+                        path_to_file:str = os.path.join(context.environment.file_directory, f'{file_name}.webp')
                         md5_result = md5(open(path_to_file,'rb').read()).hexdigest()
                         result[1]['md5'] = md5_result
-                    s,e = await handle_result(result, database, mode)
+                    s,e = await handle_result(context, result)
                     if result[0]:
                         print(f"Finished downloading post with ID {result[1]['id']}")
                     else:
@@ -263,15 +292,7 @@ async def a_main(mode: DownloadMode):
     print("Done")
     sleep(2)
 
-
-def main(mode:DownloadMode = DownloadMode.NORMAL):
-    if not os.path.exists(DB_LOCATION):
-        os.makedirs(DB_LOCATION)
-    if not os.path.exists(FILE_DIRECTORY):
-        os.makedirs(FILE_DIRECTORY)
-    asyncio.run(a_main(mode))
-
-if __name__ == "__main__":
+def get_mode_from_args() -> DownloadMode:
     if len(sys_argv) > 1 and sys_argv[1] in ("-h", "--help"):
         print("Usage: danbooru [normal|retry|force]")
         sys_exit(0)
@@ -286,4 +307,12 @@ if __name__ == "__main__":
                 f"Unknown mode '{arg}'. "
                 f"Valid modes: normal, retry, force"
             )
-    main(mode)
+    return mode
+
+def main(mode:DownloadMode = DownloadMode.NONE):
+    if(mode == DownloadMode.NONE):
+        mode = get_mode_from_args()
+    asyncio.run(a_main(mode))
+
+if __name__ == "__main__":
+    main()

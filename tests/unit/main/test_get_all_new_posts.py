@@ -1,14 +1,14 @@
 import pytest
-import aiohttp
 from aioresponses import aioresponses
 
-from danbooru_favourites_downloader.main import get_all_new_posts
+from danbooru_favourites_downloader.main import get_all_new_posts, Context
 
 
 @pytest.mark.asyncio()
-async def test_get_all_new_posts():
-    url = r"https://danbooru.donmai.us/posts.json"
-    un = "username"
+async def test_get_all_new_posts(context: Context):
+    url = context.urls.base_url + context.urls.search_result_endpoint
+    un = context.environment.account_name
+
     with aioresponses() as m:
         m.get(
             f"{url}?tags=ordfav:{un}&limit=20&page=1",
@@ -23,8 +23,7 @@ async def test_get_all_new_posts():
             payload=[{"id": 7}, {"id": 8},{"id": 9}]
         )
 
-        async with aiohttp.ClientSession() as session:
-            posts = await get_all_new_posts(session=session, auth=None, latest_id=8, un=un)
+        posts = await get_all_new_posts(context=context, latest_id=8)
 
     assert len(posts) == 7
     assert posts[1]['id'] == 2

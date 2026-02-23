@@ -1,13 +1,12 @@
 from unittest.mock import AsyncMock, Mock, patch
 import pytest
+from typing import cast
 
-from danbooru_favourites_downloader.main import DownloadMode, handle_result
+from danbooru_favourites_downloader.main import DownloadMode, handle_result, Context
 from danbooru_favourites_downloader.database import PostMetaData
+from tests.utils import as_mock
 
 
-@pytest.fixture
-def fake_db():
-    return Mock()
 
 @pytest.fixture
 def sample_post():
@@ -45,88 +44,87 @@ def sample_post_meta_data():
 
 
 @pytest.mark.asyncio()
-async def test_handle_result_success_normal(fake_db, sample_post, sample_post_meta_data):
-    mode = DownloadMode.NORMAL
+async def test_handle_result_success_normal(context: Context, sample_post, sample_post_meta_data):
     sample_ret = (True, sample_post)
     
     with patch("danbooru_favourites_downloader.main.build_metadata", return_value=sample_post_meta_data) as mock_build:
-        success, errors = await handle_result(sample_ret, fake_db, mode)                                         
+        success, errors = await handle_result(context, sample_ret)                                         
 
     assert success == 1
     assert errors == 0
-    fake_db.insert_post_data.assert_called_once_with(sample_post_meta_data)
-    fake_db.remove_from_error.assert_not_called()
-    fake_db.insert_id_to_error.assert_not_called()
+    as_mock(context.database.insert_post_data).assert_called_once_with(sample_post_meta_data)
+    as_mock(context.database.remove_from_error).assert_not_called()
+    as_mock(context.database.insert_id_to_error).assert_not_called()
 
 @pytest.mark.asyncio()
-async def test_handle_result_failure_normal(fake_db, sample_post):
-    mode = DownloadMode.NORMAL
+async def test_handle_result_failure_normal(context: Context, sample_post):
     sample_ret = (False, sample_post)
 
     with patch("danbooru_favourites_downloader.main.build_metadata", return_value=sample_post_meta_data) as mock_build:
-        success, errors = await handle_result(sample_ret, fake_db, mode)   
+        success, errors = await handle_result(context, sample_ret)   
 
     assert success == 0
     assert errors == 1
-    fake_db.insert_post_data.assert_not_called()
-    fake_db.remove_from_error.assert_not_called()
-    fake_db.insert_id_to_error.assert_called_once_with(sample_post.get('id','ASSERT_FAILURE'))
+    as_mock(context.database.insert_post_data).assert_not_called()
+    as_mock(context.database.remove_from_error).assert_not_called()
+    as_mock(context.database.insert_id_to_error).assert_called_once_with(sample_post.get('id','ASSERT_FAILURE'))
 
 
 @pytest.mark.asyncio()
-async def test_handle_result_success_retry(fake_db, sample_post, sample_post_meta_data):
-    mode = DownloadMode.RETRY
+async def test_handle_result_success_retry(context: Context, sample_post, sample_post_meta_data):
+    context.mode = DownloadMode.RETRY
     sample_ret = (True, sample_post)
 
     with patch("danbooru_favourites_downloader.main.build_metadata", return_value=sample_post_meta_data) as mock_build:
-        success, errors = await handle_result(sample_ret, fake_db, mode)                                         
+        success, errors = await handle_result(context, sample_ret)                                         
 
     assert success == 1
     assert errors == 0
-    fake_db.insert_post_data.assert_called_once_with(sample_post_meta_data)
-    fake_db.remove_from_error.assert_called_once_with(123)
-    fake_db.insert_id_to_error.assert_not_called()
+    
+    as_mock(context.database.insert_post_data).assert_called_once_with(sample_post_meta_data)
+    as_mock(context.database.remove_from_error).assert_called_once_with(123)
+    as_mock(context.database.insert_id_to_error).assert_not_called()
 
 @pytest.mark.asyncio()
-async def test_handle_result_failure_retry(fake_db, sample_post):
-    mode = DownloadMode.RETRY
+async def test_handle_result_failure_retry(context: Context, sample_post):
+    context.mode = DownloadMode.RETRY
     sample_ret = (False, sample_post)
 
     with patch("danbooru_favourites_downloader.main.build_metadata", return_value=sample_post_meta_data) as mock_build:
-        success, errors = await handle_result(sample_ret, fake_db, mode)   
+        success, errors = await handle_result(context, sample_ret)   
 
     assert success == 0
     assert errors == 0
-    fake_db.insert_post_data.assert_not_called()
-    fake_db.remove_from_error.assert_not_called()
-    fake_db.insert_id_to_error.assert_not_called()
+    as_mock(context.database.insert_post_data).assert_not_called()
+    as_mock(context.database.remove_from_error).assert_not_called()
+    as_mock(context.database.insert_id_to_error).assert_not_called()
     mock_build.assert_not_called()
 
 
 @pytest.mark.asyncio()
-async def test_handle_result_success_force(fake_db, sample_post, sample_post_meta_data):
-    mode = DownloadMode.FORCE
+async def test_handle_result_success_force(context: Context, sample_post, sample_post_meta_data):
+    context.mode = DownloadMode.FORCE
     sample_ret = (True, sample_post)
 
     with patch("danbooru_favourites_downloader.main.build_metadata", return_value=sample_post_meta_data) as mock_build:
-        success, errors = await handle_result(sample_ret, fake_db, mode)                                         
+        success, errors = await handle_result(context, sample_ret)                                         
 
     assert success == 1
     assert errors == 0
-    fake_db.insert_post_data.assert_called_once_with(sample_post_meta_data)
-    fake_db.remove_from_error.assert_not_called()
-    fake_db.insert_id_to_error.assert_not_called()
+    as_mock(context.database.insert_post_data).assert_called_once_with(sample_post_meta_data)
+    as_mock(context.database.remove_from_error).assert_not_called()
+    as_mock(context.database.insert_id_to_error).assert_not_called()
 
 @pytest.mark.asyncio()
-async def test_handle_result_failure_force(fake_db, sample_post):
-    mode = DownloadMode.FORCE
+async def test_handle_result_failure_force(context: Context, sample_post):
+    context.mode = DownloadMode.FORCE
     sample_ret = (False, sample_post)
 
     with patch("danbooru_favourites_downloader.main.build_metadata", return_value=sample_post_meta_data) as mock_build:
-        success, errors = await handle_result(sample_ret, fake_db, mode)   
+        success, errors = await handle_result(context, sample_ret)   
 
     assert success == 0
     assert errors == 1
-    fake_db.insert_post_data.assert_not_called()
-    fake_db.remove_from_error.assert_not_called()
-    fake_db.insert_id_to_error.assert_called_once_with(sample_post.get('id','ASSERT_FAILURE'))
+    as_mock(context.database.insert_post_data).assert_not_called()
+    as_mock(context.database.remove_from_error).assert_not_called()
+    as_mock(context.database.insert_id_to_error).assert_called_once_with(sample_post.get('id','ASSERT_FAILURE'))

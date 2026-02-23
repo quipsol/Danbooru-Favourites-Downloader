@@ -18,5 +18,6 @@ COPY . .
 RUN pip install --no-cache-dir -e .
 
 #ENTRYPOINT ["python", "-m", "package.main" ]
+#ENTRYPOINT ["python", "-c", "import sys; print(sys.argv)"]
 ENTRYPOINT ["package"]
 CMD ["normal"]
